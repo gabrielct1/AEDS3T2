@@ -1,7 +1,7 @@
 import networkx as nx
 import matplotlib.pyplot as plt
 
-# Função para carregar o grafo do arquivo CSV
+
 def carregar_grafo(arquivo):
     G = nx.DiGraph()  # Cria um grafo direcionado
 
@@ -15,58 +15,94 @@ def carregar_grafo(arquivo):
                 continue  # Pular linhas com formato incorreto
             codigo, nome, periodo, duracao, dependencias = partes
             dependencias = dependencias.split(';') if dependencias else []
-            
+
+            # Adiciona o nó com sua duração como atributo
+            G.add_node(codigo, nome=nome, duracao=int(duracao))
+
             # Adiciona arestas ao grafo baseadas nas dependências
             for dep in dependencias:
                 if dep:  # Verifica se a dependência não está vazia
-                    G.add_edge(dep, codigo, weight=1)  # Adiciona a aresta com peso padrão (1)
+                    # Adiciona a aresta com o peso
+                    G.add_edge(dep, codigo, weight=int(
+                        G.nodes[dep]['duracao']))
 
     return G
 
-# Função para encontrar o caminho crítico no grafo
-def encontrar_caminho_critico(G):
-    topo = list(nx.topological_sort(G))  # Ordenação topológica dos nós
-    comprimento = {}  # Dicionário para armazenar o comprimento do caminho até cada nó
-    predecessores = {}  # Dicionário para armazenar o predecessor de cada nó
-    
-    for node in topo:
-        comprimento[node] = 0
-        predecessores[node] = None
 
-    # Calcula o comprimento do caminho crítico
-    for node in topo:
-        for succ in G.successors(node):
-            peso = G[node][succ]['weight']
-            if comprimento[node] + peso > comprimento.get(succ, 0):
-                comprimento[succ] = comprimento[node] + peso
-                predecessores[succ] = node
+def encontrar_caminho_critico_bellman_ford(G):
+    # Encontrar o(s) nó(s) inicial(is) (nós sem predecessores)
+    no_inicial = [n for n in G.nodes() if G.in_degree(n) == 0]
 
-    # Encontra o nó com o comprimento máximo
-    max_node = max(comprimento, key=comprimento.get)
+    if not no_inicial:
+        raise ValueError("O grafo não tem um nó inicial válido.")
+
+    # Inicializa distâncias com valores negativos infinitos (para maximizar)
+    distancias = {node: float('-inf') for node in G.nodes()}
+    predecessores = {node: None for node in G.nodes()}
+
+    # Define a distância inicial para todos os nós sem predecessores
+    for inicio in no_inicial:
+        distancias[inicio] = G.nodes[inicio]['duracao']
+
+    # Relaxamento das arestas N-1 vezes (onde N é o número de nós)
+    for _ in range(len(G.nodes()) - 1):
+        for node in G.nodes():
+            for vizinho in G.successors(node):
+                peso_aresta = G.nodes[vizinho]['duracao']
+                nova_dist = distancias[node] + peso_aresta
+
+                if nova_dist > distancias[vizinho]:
+                    distancias[vizinho] = nova_dist
+                    predecessores[vizinho] = node
+
+    # Detectar ciclos negativos (não esperamos ter no caminho crítico)
+    for node in G.nodes():
+        for vizinho in G.successors(node):
+            peso_aresta = G.nodes[vizinho]['duracao']
+            if distancias[node] + peso_aresta > distancias[vizinho]:
+                raise ValueError("O grafo contém um ciclo de peso negativo.")
+
+    # Encontrar o nó final com maior distância
+    max_node = max(distancias, key=distancias.get)
+
+    # Reconstruir o caminho crítico
     caminho_critico = []
     while max_node is not None:
         caminho_critico.append(max_node)
         max_node = predecessores[max_node]
 
-    caminho_critico.reverse()  # Inverte a lista para obter o caminho do início ao fim
-    return caminho_critico, comprimento[caminho_critico[-1]]
+    caminho_critico.reverse()
+    return caminho_critico, distancias[caminho_critico[-1]]
 
-# Função para desenhar o grafo com destaque para o caminho crítico
-def desenhar_grafo(G, caminho_critico):
-    pos = nx.spring_layout(G, seed=123)  # Layout para a visualização do grafo
+
+def desenhar_grafo_caminho_critico(G, caminho_critico, nome_arquivo="grafo_critico.png"):
     plt.figure(figsize=(12, 8))
-    
-    # Cria um conjunto de arestas do caminho crítico para destacá-las
-    path_edges = set((caminho_critico[i], caminho_critico[i+1]) for i in range(len(caminho_critico) - 1))
-    edge_colors = ['red' if (u, v) in path_edges else 'black' for u, v in G.edges()]
-    node_colors = ['lightgreen' if node in caminho_critico else 'lightblue' for node in G.nodes()]
 
-    # Desenha o grafo com os nós e arestas destacados
-    nx.draw(G, pos, with_labels=True, node_size=2000, node_color=node_colors, edge_color=edge_colors, font_size=10, font_weight='bold', arrows=True)
-    plt.title("Grafo de Dependências com Caminho Crítico Destacado")
-    plt.show()
+    # Cria um subgrafo contendo apenas os nós e arestas do caminho crítico
+    subgrafo = G.subgraph(caminho_critico).copy()
 
-# Função principal
+    # Cria o layout para a visualização
+    pos = nx.spring_layout(subgrafo, seed=123)
+
+    # Cria um conjunto de arestas do caminho crítico
+    path_edges = [(caminho_critico[i], caminho_critico[i+1])
+                  for i in range(len(caminho_critico) - 1)]
+
+    # Define as cores dos nós e arestas para destacar o caminho crítico
+    node_colors = ['lightgreen' for node in subgrafo.nodes()]
+    edge_colors = ['red' for edge in path_edges]
+
+    # Desenha os nós e as arestas do subgrafo contendo o caminho crítico
+    nx.draw(subgrafo, pos, with_labels=True, node_size=2000, node_color=node_colors,
+            edge_color=edge_colors, font_size=10, font_weight='bold', arrows=True)
+
+    plt.title("Caminho Crítico Destacado no Grafo")
+
+    # Salva o gráfico em um arquivo de imagem
+    plt.savefig(nome_arquivo)
+    plt.close()  # Fecha a figura para evitar sobreposição em novos gráficos
+
+
 def main():
     while True:
         arquivo = input("Informe o arquivo (0 para sair): ")
@@ -75,18 +111,24 @@ def main():
         try:
             print("Processando ...")
             G = carregar_grafo(arquivo)  # Carrega o grafo do arquivo CSV
-            caminho_critico, tempo_minimo = encontrar_caminho_critico(G)  # Encontra o caminho crítico
-            
+            caminho_critico, tempo_minimo = encontrar_caminho_critico_bellman_ford(
+                G)  # Encontra o caminho crítico
+
             # Exibe o caminho crítico e o tempo mínimo
-            print("Caminho Crítico:")
+            print("\nCaminho Crítico:\n")
             for tarefa in caminho_critico:
-                print(f"- {tarefa}")
+                print(f"- {G.nodes[tarefa]['nome']}")
 
-            print(f"Tempo Mínimo: {tempo_minimo}")
+            print(f"\nTempo Mínimo: {tempo_minimo}\n")
 
-            desenhar_grafo(G, caminho_critico)  # Desenha o grafo com o caminho crítico destacado
+            # Gera um nome de arquivo para salvar a imagem
+            nome_arquivo = "grafo_caminho_critico.png"
+            # Desenha o grafo com o caminho crítico destacado e salva como imagem
+            desenhar_grafo_caminho_critico(G, caminho_critico, nome_arquivo)
+            print(f"Gráfico salvo como {nome_arquivo}")
         except Exception as e:
-            print(f"Erro ao processar o arquivo: {e}")
+            print(f"\nErro ao processar o arquivo: {e}\n")
+
 
 if __name__ == "__main__":
     main()
